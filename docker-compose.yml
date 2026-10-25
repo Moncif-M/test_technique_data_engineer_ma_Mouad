@@ -1,0 +1,79 @@
+x-airflow-reUsed: &airflow-reUsed
+  image: airflow-mouad:latest
+  build: ./airflow
+  env_file: .env
+  environment: 
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    PYTHONPATH: /opt/airflow/spark
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./spark:/opt/airflow/spark
+    - ./data:/opt/airflow/data
+  depends_on:
+    postgres: { condition: service_healthy }
+    minio-init: { condition: service_completed_successfully }
+
+services:
+  silo:                      # S3-compatible object store (MinIO fork)
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z # pin a dated RELEASE tag before submitting
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [silo_data:/data]
+
+  minio-init:                # creates the lake bucket, retrying until Silo is up
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
+    depends_on: [silo]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      LAKE_BUCKET: ${LAKE_BUCKET}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mcli alias set lake http://silo:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          echo "waiting for silo..."; sleep 2
+        done
+        mcli mb --ignore-existing lake/"$${LAKE_BUCKET}"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [pg_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+
+  airflow-init:
+    <<: *airflow-reUsed
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username $${AIRFLOW_ADMIN_USER} --password $${AIRFLOW_ADMIN_PASSWORD}
+      --firstname a --lastname b --role Admin --email a@b.c || true"
+
+  airflow-webserver:
+    <<: *airflow-reUsed
+    command: webserver
+    ports: ["8080:8080"]
+    depends_on:
+      airflow-init: { condition: service_completed_successfully }
+
+  airflow-scheduler:
+    <<: *airflow-reUsed
+    command: scheduler
+    depends_on:
+      airflow-init: { condition: service_completed_successfully }
+
+volumes:
+  silo_data:
+  pg_data:
