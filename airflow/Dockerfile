@@ -2,7 +2,7 @@ FROM apache/airflow:2.11.2-python3.11
 
 USER root
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl \
+ && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl procps \
  && rm -rf /var/lib/apt/lists/*
 
 USER airflow
@@ -13,4 +13,5 @@ RUN M=https://repo1.maven.org/maven2 \
  && curl -fsSL -o $JARS/hadoop-aws-3.3.4.jar $M/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
  && curl -fsSL -o $JARS/aws-java-sdk-bundle-1.12.262.jar $M/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar \
  && curl -fsSL -o $JARS/delta-spark_2.12-3.2.1.jar $M/io/delta/delta-spark_2.12/3.2.1/delta-spark_2.12-3.2.1.jar \
- && curl -fsSL -o $JARS/delta-storage-3.2.1.jar $M/io/delta/delta-storage/3.2.1/delta-storage-3.2.1.jar
+ && curl -fsSL -o $JARS/delta-storage-3.2.1.jar $M/io/delta/delta-storage/3.2.1/delta-storage-3.2.1.jar \
+ && curl -fsSL -o $JARS/postgresql-42.7.13.jar $M/org/postgresql/postgresql/42.7.13/postgresql-42.7.13.jar

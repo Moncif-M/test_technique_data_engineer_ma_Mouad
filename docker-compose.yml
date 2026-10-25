@@ -1,13 +1,23 @@
 x-airflow-reUsed: &airflow-reUsed
   image: airflow-mouad:latest
   build: ./airflow
-  env_file: .env
-  environment: 
+  environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-taxi-pipeline-local-dev-key}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-}
+    AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    S3_ENDPOINT: ${S3_ENDPOINT:-http://silo:9000}
+    LAKE_BUCKET: ${LAKE_BUCKET:-lake}
+    SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-3g}
+    WAREHOUSE_HOST: warehouse
+    WAREHOUSE_USER: ${WAREHOUSE_USER:-analytics}
+    WAREHOUSE_PASSWORD: ${WAREHOUSE_PASSWORD:-analytics}
+    WAREHOUSE_DB: ${WAREHOUSE_DB:-analytics}
     PYTHONPATH: /opt/airflow/spark
   volumes:
     - ./airflow/dags:/opt/airflow/dags
@@ -15,15 +25,16 @@ x-airflow-reUsed: &airflow-reUsed
     - ./data:/opt/airflow/data
   depends_on:
     postgres: { condition: service_healthy }
+    warehouse: { condition: service_healthy }
     minio-init: { condition: service_completed_successfully }
 
 services:
   silo:                      # S3-compatible object store (MinIO fork)
-    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z # pin a dated RELEASE tag before submitting
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     ports: ["9000:9000", "9001:9001"]
     volumes: [silo_data:/data]
 
@@ -31,9 +42,9 @@ services:
     image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
     depends_on: [silo]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      LAKE_BUCKET: ${LAKE_BUCKET}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      LAKE_BUCKET: ${LAKE_BUCKET:-lake}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -42,7 +53,7 @@ services:
         done
         mcli mb --ignore-existing lake/"$${LAKE_BUCKET}"
 
-  postgres:
+  postgres:                  # Airflow metadata database
     image: postgres:16
     environment:
       POSTGRES_USER: airflow
@@ -51,6 +62,19 @@ services:
     volumes: [pg_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+
+  warehouse:                 # serving database for the gold tables (BI / SQL)
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${WAREHOUSE_USER:-analytics}
+      POSTGRES_PASSWORD: ${WAREHOUSE_PASSWORD:-analytics}
+      POSTGRES_DB: ${WAREHOUSE_DB:-analytics}
+    ports: ["5433:5432"]
+    volumes: [warehouse_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       retries: 10
 
@@ -77,3 +101,4 @@ services:
 volumes:
   silo_data:
   pg_data:
+  warehouse_data:
