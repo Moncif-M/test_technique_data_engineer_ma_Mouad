@@ -21,8 +21,11 @@ with DAG(dag_id="taxi_pipeline", start_date=datetime(2023, 1, 1), schedule=None,
 
     gold_aggregate_task = make_task("gold_aggregate", "gold_aggregate_trips.py")
 
+    star_task = make_task("gold_star_schema", "gold_star_schema_trips.py")
+
     gold_to_postgres_task = make_task("gold_to_postgres", "gold_to_postgres_trips.py")
 
-    bronze_task >> silver_task >> gold_aggregate_task >> gold_to_postgres_task
+
+    bronze_task >> silver_task >> [gold_aggregate_task, star_task] >> gold_to_postgres_task
 
 
