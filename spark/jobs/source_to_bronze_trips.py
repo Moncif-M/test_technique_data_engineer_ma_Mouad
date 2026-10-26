@@ -4,7 +4,6 @@ import os
 from datetime import date, timedelta
 
 from pyspark.sql import functions as F
-
 from utils.config import BRONZE_PATH, RAW_DIR
 from utils.session import get_spark
 

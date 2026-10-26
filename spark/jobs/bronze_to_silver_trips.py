@@ -2,8 +2,8 @@
 #Reruns replace only the trip dates being processed (dynamic partition overwrite)"""
 import argparse
 
-from pyspark.sql import DataFrame, Window, functions as F
-
+from pyspark.sql import DataFrame, Window
+from pyspark.sql import functions as F
 from utils.config import BRONZE_PATH, QUARANTINE_PATH, SILVER_PATH
 from utils.session import get_spark
 

@@ -2,7 +2,6 @@
 import os
 
 import psycopg2
-
 from utils.config import GOLD_BASE
 from utils.session import get_spark
 
