@@ -1,5 +1,7 @@
 # Chicago Taxi Trips: medallion data pipeline
 
+[![CI](https://github.com/Moncif-M/test_technique_data_engineer_ma_Mouad/actions/workflows/ci.yml/badge.svg)](https://github.com/Moncif-M/test_technique_data_engineer_ma_Mouad/actions/workflows/ci.yml)
+
 End-to-end, orchestrated pipeline that runs locally: raw CSV → **bronze** → **silver** → **gold** → SQL-queryable warehouse.
 Orchestration with **Airflow**, processing with **PySpark + Delta Lake**, storage on an **S3-compatible object store**, everything started with **Docker Compose**.
 
@@ -11,8 +13,10 @@ flowchart LR
     subgraph Airflow["Airflow DAG: taxi_pipeline"]
         direction LR
         B[("BRONZE<br/>raw strings, Delta")] -->|"typing, quality rules, dedup"| S[("SILVER<br/>clean trips")]
-        S -->|aggregations| G[("GOLD<br/>4 KPI tables")]
-        G -->|JDBC| W[("Postgres warehouse")]
+        S -->|aggregations| G[("GOLD<br/>KPI tables")]
+        S -->|star schema| D[("GOLD<br/>star schema")]
+        G -->|JDBC| W[("Postgres warehouse<br/>kpi + star")]
+        D -->|JDBC| W
     end
     CSV -->|"Spark"| B
     S -.->|"rejected rows + reason"| Q[("QUARANTINE")]
@@ -23,11 +27,12 @@ Bronze, silver, quarantine and gold are Delta tables stored in the `lake` bucket
 | Service | Role | Port |
 |---|---|---|
 | `silo` | S3-compatible object store (the datalake) | 9000 (API), 9001 (console) |
+| `minio-init` | one-shot: creates the lake bucket, then exits | internal |
 | `postgres` | Airflow metadata only | internal |
 | `warehouse` | Serving database for the gold tables | 5433 |
 | `airflow-webserver`, `airflow-scheduler`, `airflow-init` | Orchestration | 8080 |
 
-Spark runs in local mode inside the Airflow image (Spark 3.5.3, Delta 3.2.1, hadoop-aws 3.3.4, PostgreSQL JDBC 42.7.13).
+Spark runs in local mode inside the Airflow image (Spark 3.5.3, Delta 3.2.1, hadoop-aws 3.3.4, PostgreSQL JDBC 42.7.13). The image is built in two stages: a builder downloads the jars, and the runtime stage only carries Java, the pinned Python dependencies and those jars.
 
 ## Data
 
@@ -37,7 +42,7 @@ Spark runs in local mode inside the Airflow image (Spark 3.5.3, Delta 3.2.1, had
 
 ## Run it
 
-**Prerequisites:** Docker with Compose v2, Python 3.9 or newer (only for the download step), about 8 GB of RAM, about 10 GB of free disk, and free ports 8080, 9000, 9001 and 5433.
+**Prerequisites:** Docker with Compose v2, Python 3.11 (the download script also runs on 3.9+), about 8 GB of RAM, about 10 GB of free disk, and free ports 8080, 9000, 9001 and 5433.
 
 ```bash
 # 1. Download the data (a few minutes). A virtual environment keeps pip away from the system Python.
@@ -54,11 +59,9 @@ docker compose ps -a             # airflow-init and minio-init must show "Exited
 docker compose exec airflow-scheduler airflow dags trigger taxi_pipeline
 ```
 
-No `.env` file is needed: every setting has a default in `docker-compose.yml`. These are **local-development values, not secrets**. To override any of them (credentials, ports of the stack, Spark memory), copy `.env.example` to `.env` and edit it.
+No `.env` file is needed: every setting has a default in `docker-compose.yml`. These are **local-development values, not secrets**. To override any of them (credentials, ports of the stack, Spark memory, `LOG_LEVEL`), copy `.env.example` to `.env` and edit it.
 
-Follow the run at http://localhost:8080 (user `admin`, password `admin`). The full quarter takes about `<N>` minutes on `<your machine>`.
-
-![DAG run](docs/dag.png)
+Follow the run at http://localhost:8080 (user `admin`, password `admin`). On a machine with 8 GB of RAM the full quarter takes several to tens of minutes, depending on the machine, with the tasks running one after another.
 
 To process another date range:
 
@@ -69,17 +72,18 @@ docker compose exec airflow-scheduler airflow dags trigger taxi_pipeline --conf 
 **Check the results**
 
 ```bash
-docker compose exec warehouse psql -U analytics -d analytics -c "select * from daily_revenue order by trip_date limit 5;"
+docker compose exec warehouse psql -U analytics -d analytics -c "select * from kpi.daily_revenue order by trip_date limit 5;"
+docker compose exec warehouse psql -U analytics -d analytics -c "select * from star.dim_date order by date_key limit 5;"
 ```
 
-The tables can also be queried from any SQL client at `localhost:5433` (user, password and database `analytics`). The lake is browsable at http://localhost:9001 (`minioadmin` / `minioadmin123`).
+The tables are in the `kpi` and `star` schemas and can also be queried from any SQL client at `localhost:5433` (user, password and database `analytics`). The lake is browsable at http://localhost:9001 (`minioadmin` / `minioadmin123`).
 
 Stop everything with `docker compose down`. Add `-v` to delete all data (lake, warehouse, Airflow metadata).
 
 ### Troubleshooting
 
 - **`DAG not found` when triggering:** the scheduler has not parsed the DAG yet. Wait 30 seconds and retry.
-- **Out of memory (a task fails with exit code 137 or `Java heap space`):** lower `SPARK_DRIVER_MEMORY` to `2g` through `.env`, then `docker compose up -d`. Tasks already run one at a time.
+- **Out of memory (a task fails with exit code 137 or `Java heap space`):** if you copied `.env.example`, lower `SPARK_DRIVER_MEMORY` from `3g` to `2g` through `.env`, then `docker compose up -d`. Without a `.env` file the Compose default is already `2g`. Tasks already run one at a time.
 - **`externally-managed-environment` when running pip:** use the virtual environment from step 1.
 - **A port is already in use:** stop the program using it, or change the published port in `docker-compose.yml`.
 
@@ -104,7 +108,7 @@ Stop everything with `docker compose down`. Add `-v` to delete all data (lake, w
 | distance missing or negative, or over 200 miles | `invalid_distance`, `distance_outlier` |
 | fare or total missing or negative | `invalid_fare`, `invalid_total` |
 
-Result on Q1 2023: `<silver rows>` rows kept, `<rejected rows>` rejected, `<duplicates>` duplicates removed. The thresholds are judgment calls, informed by common cleaning practice on this dataset. The categorical columns (`payment_type`, `company`) were inspected and are already consistent in the source (7 and 35 distinct values), so no mapping was needed.
+The per-run counts (kept, rejected, duplicates removed and the reject-reason breakdown) are written to the task log. The thresholds are judgment calls, informed by common cleaning practice on this dataset. The categorical columns (`payment_type`, `company`) were inspected and are already consistent in the source (7 and 35 distinct values), so no mapping was needed.
 
 **Gold** (`gold_aggregate_trips.py`): four tables, rebuilt from silver on each run.
 
@@ -115,45 +119,82 @@ Result on Q1 2023: `<silver rows>` rows kept, `<rejected rows>` rejected, `<dupl
 | `top_pickup_zones` | trips and revenue per pickup community area, ranked |
 | `payment_type_mix` | trips, revenue and share per payment type |
 
-**Exposure** (`gold_to_postgres_trips.py`): copies the gold tables to the `warehouse` Postgres, ready for SQL clients or a BI tool.
+**Gold star schema** (`gold_star_schema_trips.py`): a second gold mart for dimensional models.
+
+| Table | Content |
+|---|---|
+| `fact_trips` | one row per trip with date, payment and pickup/dropoff zone keys |
+| `dim_date` | one row per calendar day in the processed range |
+| `dim_payment_type` | payment types with deterministic hash keys |
+| `dim_zone` | pickup/dropoff community areas plus `-1` for unknown zones |
+
+Keys are deterministic (`xxhash64` for payment types) and missing areas map to `-1`, so every fact key has a matching dimension row.
+
+**Exposure** (`gold_to_postgres_trips.py`): copies both gold marts to the `warehouse` Postgres, in the `kpi` and `star` schemas, ready for SQL clients or a BI tool.
 
 ### Validation
 
 Row counts were reconciled across the layers: source API per-day counts against the downloaded files, bronze against the files, silver + quarantine + removed duplicates against bronze, and the gold totals against silver. Re-running the jobs on a date range leaves the totals unchanged.
+
+## Tests and CI
+
+The unit tests (22 cases from 18 test functions) cover the silver quality rules and dedup, the gold aggregates, and the star-schema keys. They run locally in a Spark session with no object store or Delta dependency:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m pytest tests -q              # excludes the integration marker
+ruff check . && ruff format --check .
+```
+
+The 5 integration tests run the real jobs against the running stack:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm integration-tests
+```
+
+The root `pyproject.toml` holds both the pytest and Ruff configuration, so the lint commands above are exactly what CI runs. GitHub Actions runs the linter and the unit tests on every push and pull request (`.github/workflows/ci.yml`).
 
 ## Technical choices and trade-offs
 
 - **Airflow 2.11 over 3.x:** the last 2.x release, with a minimal Compose footprint. Moving to 3.x is listed under next steps.
 - **Delta Lake on an object store:** ACID writes, schema enforcement and partition-level overwrite, which makes every job idempotent.
 - **Silo instead of MinIO:** the upstream MinIO repository is archived, and Silo is a maintained, API-compatible fork. The image is pinned to a dated release.
+- **Multi-stage image:** the builder stage downloads the Hadoop/Delta/Postgres jars; the runtime stage only carries Java, the Python dependencies and those jars.
+- **Logging and validation as first-class:** jobs use stdlib logging with `LOG_LEVEL` and fail fast on invalid date ranges, missing credentials, empty silver input or warehouse connection errors.
 - **Spark in local mode:** one image and fewer moving parts, and it runs on an 8 GB laptop. A standalone cluster would add services without helping at this volume. Tasks run one after another, so a single JVM is in memory at a time.
 - **Bronze left untouched:** raw strings, so data problems show up as quarantined rows in silver rather than as load failures.
 - **Quarantine instead of silent filtering:** every rejected row is kept with its reason, so the rules can be reviewed.
 - **No caching and no tuning:** recomputation is cheap at this volume, and the driver memory is better kept for the dedup shuffle.
-- **Two Postgres instances (both PostgreSQL 16):** `postgres` holds Airflow's metadata only, and `warehouse` serves the BI team, so a heavy query cannot slow the scheduler.
+- **Two Postgres instances (both PostgreSQL 16.4):** `postgres` holds Airflow's metadata only, and `warehouse` serves the BI team, so a heavy query cannot slow the scheduler.
 - **Defaults in the Compose file:** `docker compose up` works with no setup. These are local-development values only.
 - **Known limitations:**
   - dedup works within the date range being processed
   - the dataset rounds timestamps to 15 minutes, so durations are not compared with timestamp differences
   - gold is a full rebuild, not incremental
-  - there are no automated tests yet
 
 ## With more time
 
-- Star schema (fact table plus date, payment and zone dimensions, with area names from the city's boundaries dataset)
+- Add area names from the city's boundaries dataset to the zone dimension
 - Incremental silver and gold, and `OPTIMIZE` and `VACUUM` on the Delta tables
-- A data-quality framework (Great Expectations or Soda) and unit tests on the transformation rules
+- A data-quality framework (Great Expectations or Soda) on top of the existing quarantine rules
 - A BI dashboard (Metabase or Superset) or an API on top of the warehouse
-- Spark standalone cluster, Airflow 3, proper secrets management, CI (lint and tests), and monitoring and alerting
+- Spark standalone cluster, Airflow 3, proper secrets management, and monitoring and alerting
 
 ## Repository layout
 
 ```
+├── .github/workflows/  CI: lint + unit tests
+├── pyproject.toml      ruff and pytest configuration
+├── requirements*.txt   runtime and development dependencies
 ├── docker-compose.yml
-├── .env.example      optional overrides, documented
-├── airflow/          Dockerfile + dags/taxi_pipeline.py
-├── spark/            common/ (session, config) and jobs/ (one script per step)
-├── scripts/          get_data.py
-├── docs/             dag.png
-└── data/raw/         downloaded CSVs (not committed)
+├── docker-compose.test.yml  integration test overlay
+├── .dockerignore
+├── .env.example        optional overrides, documented
+├── airflow/            multi-stage Dockerfile + dags/taxi_pipeline.py
+├── spark/              utils/ (session, config, logging) and jobs/ (one script per step)
+├── scripts/            get_data.py
+├── tests/              unit tests + integration/ (Docker stack)
+└── data/raw/           downloaded CSVs (not committed)
 ```
