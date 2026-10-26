@@ -1,5 +1,5 @@
 x-airflow-reUsed: &airflow-reUsed
-  image: airflow-mouad:latest
+  image: airflow-mouad:1.0.0
   build: ./airflow
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -23,6 +23,7 @@ x-airflow-reUsed: &airflow-reUsed
     - ./airflow/dags:/opt/airflow/dags
     - ./spark:/opt/airflow/spark
     - ./data:/opt/airflow/data
+    - ./tests:/opt/airflow/tests
   depends_on:
     postgres: { condition: service_healthy }
     warehouse: { condition: service_healthy }
