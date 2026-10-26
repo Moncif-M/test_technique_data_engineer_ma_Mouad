@@ -1,0 +1,20 @@
+# Integration tests against the real object store.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm integration-tests
+services:
+  integration-tests:
+    image: airflow-mouad:1.0.0       # same image as docker-compose.yml
+    working_dir: /opt/airflow
+    depends_on:
+      minio-init: { condition: service_completed_successfully }
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://silo:9000}
+      LAKE_BUCKET: ${LAKE_BUCKET:-lake}
+      SPARK_DRIVER_MEMORY: 1g        # a handful of rows: keeps the extra JVMs small
+      PYTHONPATH: /opt/airflow/spark
+    volumes:
+      - ./spark:/opt/airflow/spark
+      - ./tests:/opt/airflow/tests
+      - ./data:/opt/airflow/data
+    command: python -m pytest tests/integration -m integration -q
