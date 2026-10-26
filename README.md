@@ -48,7 +48,7 @@ Spark runs in local mode inside the Airflow image (Spark 3.5.3, Delta 3.2.1, had
 # 1. Download the data (a few minutes). A virtual environment keeps pip away from the system Python.
 python3 -m venv .venv
 source .venv/bin/activate        # fish: source .venv/bin/activate.fish ; Windows: .venv\Scripts\activate
-pip install requests
+pip install requests==2.34.2
 python scripts/get_data.py --start 2023-01-01 --end 2023-03-31
 
 # 2. Start the stack (the first build takes a few minutes: images, Java, PySpark, jars)
