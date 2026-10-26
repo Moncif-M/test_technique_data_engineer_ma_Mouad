@@ -177,7 +177,6 @@ The root `pyproject.toml` holds both the pytest and Ruff configuration, so the l
 ## With more time
 
 - Add area names from the city's boundaries dataset to the zone dimension
-- Incremental silver and gold, and `OPTIMIZE` and `VACUUM` on the Delta tables
 - A data-quality framework (Great Expectations or Soda) on top of the existing quarantine rules
 - A BI dashboard (Metabase or Superset) or an API on top of the warehouse
 - Spark standalone cluster, Airflow 3, proper secrets management, and monitoring and alerting
