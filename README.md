@@ -85,6 +85,7 @@ Stop everything with `docker compose down`. Add `-v` to delete all data (lake, w
 - **`DAG not found` when triggering:** the scheduler has not parsed the DAG yet. Wait 30 seconds and retry.
 - **Out of memory (a task fails with exit code 137 or `Java heap space`):** if you copied `.env.example`, lower `SPARK_DRIVER_MEMORY` from `3g` to `2g` through `.env`, then `docker compose up -d`. Without a `.env` file the Compose default is already `2g`. Tasks already run one at a time.
 - **`externally-managed-environment` when running pip:** use the virtual environment from step 1.
+- **Tests fail with `RecursionError` or endless `when serializing function object` messages:** the venv was created with Python 3.12+. Delete it and recreate it with `python3.11 -m venv .venv`; PySpark 3.5.3 supports Python 3.8–3.11 only.
 - **A port is already in use:** stop the program using it, or change the published port in `docker-compose.yml`.
 
 ## Pipeline
@@ -140,8 +141,10 @@ Row counts were reconciled across the layers: source API per-day counts against 
 
 The unit tests (22 cases from 18 test functions) cover the silver quality rules and dedup, the gold aggregates, and the star-schema keys. They run locally in a Spark session with no object store or Delta dependency:
 
+PySpark 3.5.3 only supports Python 3.8–3.11, so create the test environment with Python 3.11 explicitly. Using the system `python` (3.12+) makes Spark's bundled cloudpickle fail with `RecursionError` and `when serializing function ...` messages:
+
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv              # must be 3.8–3.11; 3.11 is what CI uses
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 python -m pytest tests -q              # excludes the integration marker
