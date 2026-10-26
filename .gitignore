@@ -1,6 +1,8 @@
 .env
 .env.bak
 
+.venv/
+
 data/*
 !data/raw/
 data/raw/*
