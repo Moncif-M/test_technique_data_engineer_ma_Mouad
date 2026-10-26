@@ -1,5 +1,5 @@
-#Silver: typed, validated, deduplicated trips and a quarantine table for rejects
-#Reruns replace only the trip dates being processed (dynamic partition overwrite)"""
+"""Silver: typed, validated, deduplicated trips and a quarantine table for rejects
+Reruns replace only the trip dates being processed (dynamic partition overwrite)"""
 import argparse
 
 from pyspark.sql import DataFrame, Window

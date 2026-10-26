@@ -1,4 +1,4 @@
-# Exposure: copy the gold Delta tables into the Postgres warehouse, one schema per kind of table
+"""Exposure: copy the gold Delta tables into the Postgres warehouse, one schema per kind of table"""
 import os
 
 import psycopg2

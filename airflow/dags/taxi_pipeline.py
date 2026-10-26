@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
-from airflow import DAG
+
 from airflow.operators.bash import BashOperator
+
+from airflow import DAG
 
 params = {"start": "2023-01-01", "end": "2023-03-31"}
 default_args = {"retries": 1, "retry_delay": timedelta(minutes=1)}

@@ -1,3 +1,6 @@
+"""Gold KPI tables: daily revenue, hourly trip stats, top pickup zones and payment mix.
+
+Reads silver and rebuilds each table in full, so re-running the job is idempotent."""
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
