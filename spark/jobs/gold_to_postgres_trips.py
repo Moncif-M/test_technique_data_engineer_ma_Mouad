@@ -1,11 +1,16 @@
-"""Exposure: copy the gold Delta tables into the Postgres warehouse, one schema per kind of table"""
+"""Exposure: copy the gold Delta tables into the Postgres warehouse."""
+
 import os
 
 import psycopg2
+
 from utils.config import GOLD_BASE
+from utils.log import get_logger
 from utils.session import get_spark
 
-TABLES = {                                       # schema -> {table: path under GOLD_BASE}
+logger = get_logger(__name__)
+
+TABLES = {
     "kpi": {
         "daily_revenue": "daily_revenue",
         "trip_stats_by_hour": "trip_stats_by_hour",
@@ -20,7 +25,7 @@ TABLES = {                                       # schema -> {table: path under 
     },
 }
 
-HOST = os.getenv("WAREHOUSE_HOST", "warehouse")  # service name from docker-compose
+HOST = os.getenv("WAREHOUSE_HOST", "warehouse")
 DB = os.getenv("WAREHOUSE_DB", "analytics")
 USER = os.getenv("WAREHOUSE_USER", "analytics")
 PASSWORD = os.getenv("WAREHOUSE_PASSWORD", "analytics")
@@ -28,15 +33,29 @@ URL = f"jdbc:postgresql://{HOST}:5432/{DB}"
 PROPS = {"user": USER, "password": PASSWORD, "driver": "org.postgresql.Driver"}
 
 
-def ensure_schemas() -> None:                    # create the schemas if missing (safe to repeat)
-    conn = psycopg2.connect(host=HOST, dbname=DB, user=USER, password=PASSWORD)
-    with conn, conn.cursor() as cur:
-        for schema in TABLES:
-            cur.execute(f"create schema if not exists {schema}")
-    conn.close()
+def ensure_schemas() -> None:
+    """Create the target schemas when missing.
+
+    Raises:
+        RuntimeError: if the warehouse cannot be reached or the DDL fails.
+    """
+    try:
+        conn = psycopg2.connect(host=HOST, dbname=DB, user=USER, password=PASSWORD)
+    except psycopg2.Error as exc:
+        raise RuntimeError(f"could not connect to warehouse {HOST}/{DB}: {exc}") from exc
+
+    try:
+        with conn, conn.cursor() as cur:
+            for schema in TABLES:
+                cur.execute(f"create schema if not exists {schema}")
+    except psycopg2.Error as exc:
+        raise RuntimeError(f"could not create warehouse schemas: {exc}") from exc
+    finally:
+        conn.close()
 
 
 def main() -> None:
+    """Copy every gold table into its matching warehouse schema."""
     ensure_schemas()
     spark = get_spark("gold_to_postgres")
     for schema, tables in TABLES.items():
@@ -44,11 +63,11 @@ def main() -> None:
             df = spark.read.format("delta").load(f"{GOLD_BASE}/{path}")
             (
                 df.write.mode("overwrite")
-                .option("truncate", "true")      # empty and refill: reruns never duplicate rows
-                .option("batchsize", 10000)      # bigger inserts for the 1.4M-row fact table
+                .option("truncate", "true")
+                .option("batchsize", 10000)
                 .jdbc(URL, f"{schema}.{name}", properties=PROPS)
             )
-            print(f"EXPOSE: {schema}.{name} -> {df.count()} rows")
+            logger.info("EXPOSE: %s.%s -> %d rows", schema, name, df.count())
 
 
 if __name__ == "__main__":

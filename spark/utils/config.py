@@ -1,3 +1,9 @@
+"""Lake paths and runtime settings shared by every pipeline job.
+
+Paths point at the object store configured through ``LAKE_BUCKET`` and
+``LAKE_PREFIX``. Changing the prefix isolates a run without touching the code.
+"""
+
 import os
 
 BUCKET = os.getenv("LAKE_BUCKET", "lake")
