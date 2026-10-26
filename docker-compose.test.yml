@@ -4,6 +4,7 @@ services:
   integration-tests:
     image: airflow-mouad:1.0.0       # same image as docker-compose.yml
     working_dir: /opt/airflow
+    restart: "no"
     depends_on:
       minio-init: { condition: service_completed_successfully }
     environment:
@@ -14,6 +15,7 @@ services:
       SPARK_DRIVER_MEMORY: 1g        # a handful of rows: keeps the extra JVMs small
       PYTHONPATH: /opt/airflow/spark
     volumes:
+      - ./pyproject.toml:/opt/airflow/pyproject.toml:ro
       - ./spark:/opt/airflow/spark
       - ./tests:/opt/airflow/tests
       - ./data:/opt/airflow/data

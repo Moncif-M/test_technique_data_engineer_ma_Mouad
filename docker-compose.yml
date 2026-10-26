@@ -1,6 +1,8 @@
-x-airflow-reUsed: &airflow-reUsed
+x-airflow-common: &airflow-common
   image: airflow-mouad:1.0.0
-  build: ./airflow
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -14,6 +16,7 @@ x-airflow-reUsed: &airflow-reUsed
     S3_ENDPOINT: ${S3_ENDPOINT:-http://silo:9000}
     LAKE_BUCKET: ${LAKE_BUCKET:-lake}
     SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
     WAREHOUSE_HOST: warehouse
     WAREHOUSE_USER: ${WAREHOUSE_USER:-analytics}
     WAREHOUSE_PASSWORD: ${WAREHOUSE_PASSWORD:-analytics}
@@ -33,15 +36,29 @@ services:
   silo:                      # S3-compatible object store (MinIO fork)
     image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
     command: server /data --console-address ":9001"
+    restart: unless-stopped
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     ports: ["9000:9000", "9001:9001"]
     volumes: [silo_data:/data]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mcli alias set health http://localhost:9000
+          "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null
+          && mcli ready health
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   minio-init:                # creates the lake bucket, retrying until Silo is up
     image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
-    depends_on: [silo]
+    restart: "no"
+    depends_on:
+      silo: { condition: service_healthy }
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
@@ -55,7 +72,8 @@ services:
         mcli mb --ignore-existing lake/"$${LAKE_BUCKET}"
 
   postgres:                  # Airflow metadata database
-    image: postgres:16
+    image: postgres:16.4
+    restart: unless-stopped
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -67,7 +85,8 @@ services:
       retries: 10
 
   warehouse:                 # serving database for the gold tables (BI / SQL)
-    image: postgres:16
+    image: postgres:16.4
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${WAREHOUSE_USER:-analytics}
       POSTGRES_PASSWORD: ${WAREHOUSE_PASSWORD:-analytics}
@@ -80,21 +99,24 @@ services:
       retries: 10
 
   airflow-init:
-    <<: *airflow-reUsed
+    <<: *airflow-common
+    restart: "no"
     command: >
       bash -c "airflow db migrate &&
       airflow users create --username $${AIRFLOW_ADMIN_USER} --password $${AIRFLOW_ADMIN_PASSWORD}
       --firstname a --lastname b --role Admin --email a@b.c || true"
 
   airflow-webserver:
-    <<: *airflow-reUsed
+    <<: *airflow-common
+    restart: unless-stopped
     command: webserver
     ports: ["8080:8080"]
     depends_on:
       airflow-init: { condition: service_completed_successfully }
 
   airflow-scheduler:
-    <<: *airflow-reUsed
+    <<: *airflow-common
+    restart: unless-stopped
     command: scheduler
     depends_on:
       airflow-init: { condition: service_completed_successfully }
