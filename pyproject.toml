@@ -1,0 +1,20 @@
+[tool.pytest.ini_options]
+pythonpath = ["spark"]
+testpaths = ["tests"]
+markers = ["integration: needs the running Docker stack"]
+addopts = "-m 'not integration'"
+
+[tool.ruff]
+line-length = 130
+src = ["spark", "scripts", "airflow", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["jobs", "utils"]
+
+[tool.ruff.format]
+quote-style = "double"
